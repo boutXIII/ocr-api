@@ -29,7 +29,7 @@ def extract_entities(
     if gliner_labels:
         gliner_entities = run_gliner(
             text=text,
-            document_class=document_class,
+            labels=gliner_labels,
             threshold=gliner_threshold,
         )
 
