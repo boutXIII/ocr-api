@@ -4,13 +4,7 @@
 import re
 from datetime import datetime, timedelta
 from stdnum import iban
-
-# =========================================
-# REGEX
-# =========================================
-NIR_REGEX = re.compile(r"^\s*[12]\d{2}(0[1-9]|1[0-2])\d{2}\d{3}\d{3}\d{2}\s*$")
-IBAN_SIMPLE = re.compile(r"\b[A-Z]{2}\s?\d{2}(?:\s?[A-Z0-9]){11,30}\b")
-BIC_REGEX = re.compile(r"\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?\b")
+from api.ner.patterns import NIR_REGEX, IBAN_REGEX, BIC_REGEX
 
 # =========================================
 # Normalizers
@@ -104,7 +98,7 @@ def check_nir(v: str) -> tuple[bool, list[str]]:
 
 def check_iban(v: str) -> tuple[bool, list[str]]:
     vv = norm_iban(v)
-    if not IBAN_SIMPLE.match(vv):
+    if not IBAN_REGEX.match(vv):
         return False, ["iban_regex"]
     # checksum “light” (optionnel: stdnum.iban.is_valid)
     # Si tu as python-stdnum, remplace par iban.is_valid(vv)

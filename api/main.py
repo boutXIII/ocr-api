@@ -5,6 +5,7 @@ import time
 
 from fastapi import FastAPI, Request
 from fastapi.openapi.utils import get_openapi
+from .logger import get_logger
 
 from api import config as cfg
 from api.routes import ocr, health
@@ -24,6 +25,15 @@ app = FastAPI(
 # =========================================
 app.include_router(health.router, prefix="/health", tags=["health"])
 app.include_router(ocr.router, prefix="/ocr", tags=["ocr"])
+
+# =========================================
+# Startup event
+# =========================================
+@app.on_event("startup")
+async def init_logging():
+    logger = get_logger("BOOT")
+    logger.info("=== LOGGER STARTED ===")
+    print("=== LOGGER STARTED (PRINT) ===")
 
 # =========================================
 # Middleware

@@ -6,6 +6,7 @@ from typing import Any
 
 from api.ner import rules
 from api.ner.registry import FieldRule, FieldValidatorRegistry
+from api.ner.patterns import NIR_REGEX, IBAN_REGEX, BIC_REGEX
 
 # =========================================
 # Document strategy definition
@@ -53,7 +54,7 @@ DOCUMENT_STRATEGY: dict[str, dict[str, dict[str, Any]]] = {
         },
         "social_security_number": {
             "extractor": "regex",
-            "pattern": re.compile(r"\b[12]\d{14}\b"),
+            "pattern": NIR_REGEX,
             "score": 1.0,
             "rule": FieldRule(
                 threshold=0.90,
@@ -73,7 +74,7 @@ DOCUMENT_STRATEGY: dict[str, dict[str, dict[str, Any]]] = {
         },
         "iban_number": {
             "extractor": "regex",
-            "pattern": re.compile(r"\b[A-Z]{2}\s?\d{2}(?:\s?\d{4}){4,7}\b"),
+            "pattern": IBAN_REGEX,
             "score": 1.0,
             "rule": FieldRule(
                 threshold=0.90,
@@ -83,7 +84,7 @@ DOCUMENT_STRATEGY: dict[str, dict[str, dict[str, Any]]] = {
         },
         "bic_code": {
             "extractor": "gliner",
-            "pattern": re.compile(r"\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?\b"),
+            "pattern": BIC_REGEX,
             "rule": FieldRule(
                 threshold=0.85,
                 normalize=rules.norm_bic,

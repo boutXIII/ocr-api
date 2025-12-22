@@ -6,6 +6,7 @@ import json
 import base64
 import importlib
 from typing import Any, Optional
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -17,8 +18,11 @@ from gliner import GLiNER
 # =========================================
 # Constantes / Environnement
 # =========================================
-DEFAULT_ONNXTR_CACHE = "app\models\doctr"
-os.environ["ONNXTR_CACHE_DIR"] = DEFAULT_ONNXTR_CACHE
+DEFAULT_ONNXTR_CACHE = "models\doctr"
+
+os.environ.setdefault("ONNXTR_CACHE_DIR", str(DEFAULT_ONNXTR_CACHE))
+
+print(f"ONNXTR_CACHE_DIR set to {os.environ['ONNXTR_CACHE_DIR']}")
 
 # =========================================
 # Geometry helpers
@@ -130,7 +134,7 @@ def load_reco_models(reco_printed: str = "crnn_vgg16_bn", reco_handwritten: str 
 # GLiNER (NER)
 # =========================================
 gliner_model = GLiNER.from_pretrained(
-    "app/models/gliner/gliner_large-v2.5",
+    "models/gliner/gliner_large-v2.5",
     load_onnx_model=True,
     map_location="cpu",
 )

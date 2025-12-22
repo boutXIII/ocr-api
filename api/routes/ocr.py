@@ -11,8 +11,8 @@ from api.schemas import (
 )
 from api.utils.documents import get_documents, resolve_geometry
 from api.vision.predictor import init_predictor
-from api.validators.strategy import build_registry
-from api.validators.extractor import extract_entities
+from api.ner.strategy import build_registry
+from api.ner.extractor import extract_entities
 
 # =========================================
 # Router & Registry
