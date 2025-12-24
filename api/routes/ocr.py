@@ -5,11 +5,15 @@ from fastapi import (
     APIRouter, Depends, File,
     HTTPException, Request, UploadFile, status
 )
+
+from api.logger import get_logger
+logger = get_logger("OCR_ROUTE")
+
 from api.schemas import (
     OCRIn, OCROut, OCRPage, OCRBlock, OCRLine, OCRWord,
     ReadIn, ReadOut, EntityOut, FieldResult,
 )
-from api.utils.documents import get_documents, resolve_geometry
+from api.utils.tools import get_documents, resolve_geometry
 from api.vision.predictor import init_predictor
 from api.ner.strategy import build_registry
 from api.ner.extractor import extract_entities
@@ -45,47 +49,7 @@ async def perform_ocr(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    out = predictor(content).export()
-
-    results: list[OCROut] = [
-        OCROut(
-            name=filename,
-            orientation={"value": None, "confidence": None},
-            language={"value": None, "confidence": None},
-            dimensions=tuple(page.get("dimensions", (0, 0))),
-            items=[
-                OCRPage(
-                    blocks=[
-                        OCRBlock(
-                            geometry=resolve_geometry(block["geometry"]),
-                            objectness_score=1.0,
-                            lines=[
-                                OCRLine(
-                                    geometry=resolve_geometry(line["geometry"]),
-                                    objectness_score=1.0,
-                                    words=[
-                                        OCRWord(
-                                            value=word["value"],
-                                            geometry=resolve_geometry(word["geometry"]),
-                                            objectness_score=1.0,
-                                            confidence=round(word.get("confidence", 1.0), 2),
-                                            crop_orientation={"value": 0, "confidence": None},
-                                        )
-                                        for word in line.get("words", [])
-                                    ],
-                                )
-                                for line in block.get("lines", [])
-                            ],
-                        )
-                        for block in page.get("blocks", [])
-                    ]
-                )
-            ],
-        )
-        for page, filename in zip(out.get("pages", []), filenames)
-    ]
-
-    return results
+    return predictor(content, filenames)
 
 # =========================================
 # OCR + NER endpoint

@@ -28,7 +28,6 @@ def get_logger(name: str = LOG_NAME) -> logging.Logger:
 
     # 📁 logs directory (absolute, stable)
     base_dir = Path(__file__).resolve().parents[1]  # project root
-    print(f"Base dir for logs: {base_dir}")
     log_dir = base_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 

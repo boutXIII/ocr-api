@@ -13,16 +13,20 @@ import numpy as np
 from fastapi import UploadFile
 from onnxtr.io import DocumentFile
 
+from onnxtr.models.classification import mobilenet_v3_small_page_orientation
 from gliner import GLiNER
+
+from api.logger import get_logger
+logger = get_logger("TOOLS_UTILS")
 
 # =========================================
 # Constantes / Environnement
 # =========================================
-DEFAULT_ONNXTR_CACHE = "models\doctr"
+DEFAULT_ONNXTR_CACHE = "D:\\Workspaces\\ocr-api\\models\\doctr\\"
 
 os.environ.setdefault("ONNXTR_CACHE_DIR", str(DEFAULT_ONNXTR_CACHE))
 
-print(f"ONNXTR_CACHE_DIR set to {os.environ['ONNXTR_CACHE_DIR']}")
+logger.info(f"ONNXTR_CACHE_DIR set to {os.environ['ONNXTR_CACHE_DIR']}")
 
 # =========================================
 # Geometry helpers
@@ -107,28 +111,72 @@ def find_model_path(model_name: str, models_dir: str = DEFAULT_ONNXTR_CACHE) -> 
             return os.path.join(models_dir, file)
     raise FileNotFoundError(f"Aucun fichier trouvé pour {model_name} dans {models_dir}")
 
-def load_reco_models(reco_printed: str = "crnn_vgg16_bn", reco_handwritten: str = "parseq"):
-    """Load separate recognition models for printed and handwritten text
+def load_det_models(det_arch: str = "db_resnet50"):
+    """Load detection model
     
     Args:
-        reco_printed: Recognition model for printed text
-        reco_handwritten: Recognition model for handwritten text
+        det_arch: Detection architecture name
         
     Returns:
-        Tuple of (reco_printed_model, reco_handwritten_model)
+        Detection model
     """
-    print(f"Loading printed reco model: {reco_printed}...")
-    printed_path = find_model_path(reco_printed)
+    print(f"Loading detection model: {det_arch}...")
+    det_path = find_model_path(det_arch)
+    det_module = importlib.import_module("onnxtr.models.detection")
+    det_fn = getattr(det_module, det_arch)
+    det_model = det_fn(det_path)
+    logger.debug(f"Detection model loaded: {det_arch}")
+    logger.debug(f"Detection model loaded from {det_path}")
+    logger.debug(f"Detection model function: {det_fn}")
+    logger.debug(f"Detection model details: {det_model}")
+    
+    return det_model
+        
+def load_reco_models(reco_arch: str = "crnn_vgg16_bn"):
+    """Load recognition model
+    
+    Args:
+        reco_arch: Recognition architecture name
+        
+    Returns:
+        Recognition model
+    """
+    print(f"Loading recognition model: {reco_arch}...")
+    reco_path = find_model_path(reco_arch)
     reco_module = importlib.import_module("onnxtr.models.recognition")
-    reco_printed_fn = getattr(reco_module, reco_printed)
-    reco_printed_model = reco_printed_fn(printed_path)
-    
-    print(f"Loading handwritten reco model: {reco_handwritten}...")
-    handwritten_path = find_model_path(reco_handwritten)
-    reco_handwritten_fn = getattr(reco_module, reco_handwritten)
-    reco_handwritten_model = reco_handwritten_fn(handwritten_path)
-    
-    return reco_printed_model, reco_handwritten_model
+    reco_fn = getattr(reco_module, reco_arch)
+    reco_model = reco_fn(reco_path)
+    logger.debug(f"Recognition model loaded: {reco_arch}")
+    logger.debug(f"Recognition model loaded from {reco_path}")
+    logger.debug(f"Recognition model function: {reco_fn}")
+    logger.debug(f"Recognition model details: {reco_model}")
+
+    return reco_model
+
+def load_orientation_models(orientation_arch: str = "mobilenet_v3_small_page_orientation"):
+    """Load orientation model
+
+    Args:
+        reco_arch: Recognition architecture name
+        
+    Returns:
+        Orientation model
+    """
+    print(f"Loading orientation model: {orientation_arch}...")
+    orientation_path = find_model_path(orientation_arch)
+    orientation_module = importlib.import_module("onnxtr.models.classification")
+    orientation_fn = getattr(orientation_module, orientation_arch)
+    orientation_model = orientation_fn(orientation_path)
+
+    logger.debug(f"Orientation model loaded: {orientation_arch}")
+    logger.debug(f"Orientation model loaded from {orientation_path}")
+    logger.debug(f"Orientation model function: {orientation_fn}")
+    logger.debug(f"Orientation model details: {orientation_model}")
+
+    zoo_module = importlib.import_module("onnxtr.models.classification.zoo")
+    orientation_predictor = zoo_module.page_orientation_predictor(orientation_model)
+
+    return orientation_predictor
 
 # =========================================
 # GLiNER (NER)

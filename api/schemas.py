@@ -3,19 +3,23 @@
 # =========================================
 from typing import Any, Dict, List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # =========================================
 # INPUT SCHEMAS
 # =========================================
 class OCRIn(BaseModel):
+    det_arch: str = Field(default="db_resnet50", description="Detection model architecture")
+    reco_arch: str = Field(default="crnn_vgg16_bn", description="Recognition model architecture")
+
     resolve_lines: bool = Field(default=True, examples=[True])
     resolve_blocks: bool = Field(default=False, examples=[False])
     paragraph_break: float = Field(default=0.0035, examples=[0.0035])
-    # 🆕 Print-Type Classification
-    use_print_type: bool = Field(default=False, description="Enable print/handwritten classification")
+
+    bin_thresh: float = Field(default=0.3, ge=0.0, le=1.0, description="Binarization threshold for detection post-processing")
+    box_thresh: float = Field(default=0.1, ge=0.0, le=1.0, description="Box threshold for detection post-processing")
     
-    # 🆕 Modèles de reconnaissance spécifiques
+    use_print_type: bool = Field(default=False, description="Enable print/handwritten classification")
     reco_printed: str = Field(default="crnn_vgg16_bn", description="Reco model for printed text")
     reco_handwritten: str = Field(default="parseq", description="Reco model for handwritten text")
 

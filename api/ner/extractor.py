@@ -2,7 +2,7 @@
 # Imports
 # =========================================
 from api.ner.strategy import DOCUMENT_STRATEGY
-from api.utils.documents import run_gliner
+from api.utils.tools import run_gliner
 
 # =========================================
 # Entity extraction
