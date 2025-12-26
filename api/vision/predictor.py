@@ -128,6 +128,87 @@ def build_word(word, all_print_types, pi):
         print_confidence=meta.get("print_confidence", 0.0),
     )
 
+def call_print_type_model(params, reco_printed, reco_handwritten):
+
+    page_orient_predictor = None
+    if params.get("detect_orientation", False):
+        logger.debug("Loading page orientation model")
+        page_orient_predictor = load_page_orientation_models()
+        detector = detection_predictor(
+            arch=load_det_models(params["det_arch"]),
+            assume_straight_pages=False,
+        )
+    else:
+        detector = detection_predictor(
+            arch=load_det_models(params["det_arch"]),
+            assume_straight_pages=True,
+        )
+
+    reco_printed_model = load_reco_models(reco_printed)
+    reco_handwritten_model = load_reco_models(reco_handwritten)
+
+    return detector, reco_handwritten_model, reco_printed_model, page_orient_predictor
+
+def build_readOut(out, filenames, document_class, gliner_threshold) -> list[ReadOut]:
+    results: list[ReadOut] = []
+    for page, filename in zip(out.get("pages", []), filenames):
+            # --- texte OCR ---
+        text = " ".join(
+            word["value"]
+            for block in page.get("blocks", [])
+            for line in block.get("lines", [])
+            for word in line.get("words", [])
+        )
+        logger.debug(f"Extracted text for NER: {text}")
+
+        try:
+            entities_raw = extract_entities(
+                text=text,
+                document_class=document_class,
+                gliner_threshold=gliner_threshold,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        ctx: dict = {}
+        validated_fields: list[FieldResult] = []
+
+        for e in entities_raw:
+            label = e["label"]
+            raw = e["text"]
+            score = float(e["score"])
+
+            if label == "person":
+                ctx["person"] = raw
+
+            evaluated = REGISTRY.evaluate(
+                document_class=document_class,
+                label=label,
+                raw_value=raw,
+                score=score,
+                ctx=ctx,
+            )
+
+            validated_fields.append(FieldResult(**evaluated))
+
+        results.append(
+            ReadOut(
+                name=filename,
+                text=text,
+                entities=[
+                    EntityOut(
+                        label=e["label"],
+                        text=e["text"],
+                        start=e["start"],
+                        end=e["end"],
+                        score=e["score"],
+                    )
+                    for e in entities_raw
+                ],
+                fields_validated=validated_fields,
+            )
+        )
+    return results
 
 # =========================================
 # Predictor factory
@@ -180,21 +261,7 @@ def _init_ocr_predictor(request: OCRIn) -> Callable:
         pages = []
         all_print_types = []
 
-        if params.get("detect_orientation", False):
-            logger.debug("Loading page orientation model")
-            page_orient_predictor = load_page_orientation_models()
-            detector = detection_predictor(
-                arch=load_det_models(params["det_arch"]),
-                assume_straight_pages=False,
-            )
-        else:
-            detector = detection_predictor(
-                arch=load_det_models(params["det_arch"]),
-                assume_straight_pages=True,
-            )
-
-        reco_printed_model = load_reco_models(reco_printed)
-        reco_handwritten_model = load_reco_models(reco_handwritten)
+        detector, reco_handwritten_model, reco_printed_model, page_orient_predictor = call_print_type_model(params, reco_printed, reco_handwritten)
 
         def predictor(content, filenames):
             det_out, out_maps = detector(content, return_maps=True)
@@ -305,8 +372,6 @@ def _init_ocr_predictor(request: OCRIn) -> Callable:
                     crop_orientations=all_crop_orientations,
                 )
 
-                
-
             out = predictor_core.export()
             results: list[OCROut] = []
 
@@ -364,7 +429,6 @@ def _init_ocr_predictor(request: OCRIn) -> Callable:
         logger.info("Simple OCR mode")
 
         predictor_core = load_predictor(**params)
-        
 
         def predictor(content, filenames):
             out = predictor_core(content).export()
@@ -458,21 +522,7 @@ def _init_read_predictor(request: ReadIn) -> Callable:
         pages = []
         all_print_types = []
 
-        if params.get("detect_orientation", False):
-            logger.debug("Loading page orientation model")
-            page_orient_predictor = load_page_orientation_models()
-            detector = detection_predictor(
-                arch=load_det_models(params["det_arch"]),
-                assume_straight_pages=False,
-            )
-        else:
-            detector = detection_predictor(
-                arch=load_det_models(params["det_arch"]),
-                assume_straight_pages=True,
-            )
-
-        reco_printed_model = load_reco_models(reco_printed)
-        reco_handwritten_model = load_reco_models(reco_handwritten)
+        detector, reco_handwritten_model, reco_printed_model, page_orient_predictor = call_print_type_model(params, reco_printed, reco_handwritten)
 
         def predictor(content, filenames):
             det_out, out_maps = detector(content, return_maps=True)
@@ -502,7 +552,7 @@ def _init_read_predictor(request: ReadIn) -> Callable:
                 ]
                 logger.debug(f"orientations: {orientations}")
 
-            for doc, res, filename in zip(content, det_out, filenames):
+            for doc, res in zip(content, det_out):
                 img_shape = doc.shape[:2]
                 page_shapes.append(img_shape)
                 pages.append(doc)
@@ -584,67 +634,9 @@ def _init_read_predictor(request: ReadIn) -> Callable:
                 )
 
             out = predictor_core.export()
-            results: list[OCROut] = []
+            logger.debug(f"Read/NER output: {out}")
 
-            for page, filename in zip(out.get("pages", []), filenames):
-                 # --- texte OCR ---
-                text = " ".join(
-                    word["value"]
-                    for block in page.get("blocks", [])
-                    for line in block.get("lines", [])
-                    for word in line.get("words", [])
-                )
-                logger.debug(f"Extracted text for NER: {text}")
-
-                try:
-                    entities_raw = extract_entities(
-                        text=text,
-                        document_class=document_class,
-                        gliner_threshold=gliner_threshold,
-                    )
-                except ValueError as e:
-                    raise HTTPException(status_code=400, detail=str(e))
-
-                ctx: dict = {}
-                validated_fields: list[FieldResult] = []
-
-                for e in entities_raw:
-                    label = e["label"]
-                    raw = e["text"]
-                    score = float(e["score"])
-
-                    if label == "person":
-                        ctx["person"] = raw
-
-                    evaluated = REGISTRY.evaluate(
-                        document_class=document_class,
-                        label=label,
-                        raw_value=raw,
-                        score=score,
-                        ctx=ctx,
-                    )
-
-                    validated_fields.append(FieldResult(**evaluated))
-
-                results.append(
-                    ReadOut(
-                        name=filename,
-                        text=text,
-                        entities=[
-                            EntityOut(
-                                label=e["label"],
-                                text=e["text"],
-                                start=e["start"],
-                                end=e["end"],
-                                score=e["score"],
-                            )
-                            for e in entities_raw
-                        ],
-                        fields_validated=validated_fields,
-                    )
-                )
-            
-            return results
+            return build_readOut(out, filenames, document_class, gliner_threshold)
     else:
         logger.info("Simple Read/NER mode")
 
@@ -654,65 +646,6 @@ def _init_read_predictor(request: ReadIn) -> Callable:
             out = predictor_core(content).export()
             logger.debug(f"Read/NER output: {out}")
 
-            results: list[ReadOut] = []
-            for page, filename in zip(out.get("pages", []), filenames):
-                 # --- texte OCR ---
-                text = " ".join(
-                    word["value"]
-                    for block in page.get("blocks", [])
-                    for line in block.get("lines", [])
-                    for word in line.get("words", [])
-                )
-                logger.debug(f"Extracted text for NER: {text}")
-
-                try:
-                    entities_raw = extract_entities(
-                        text=text,
-                        document_class=document_class,
-                        gliner_threshold=gliner_threshold,
-                    )
-                except ValueError as e:
-                    raise HTTPException(status_code=400, detail=str(e))
-
-                ctx: dict = {}
-                validated_fields: list[FieldResult] = []
-
-                for e in entities_raw:
-                    label = e["label"]
-                    raw = e["text"]
-                    score = float(e["score"])
-
-                    if label == "person":
-                        ctx["person"] = raw
-
-                    evaluated = REGISTRY.evaluate(
-                        document_class=document_class,
-                        label=label,
-                        raw_value=raw,
-                        score=score,
-                        ctx=ctx,
-                    )
-
-                    validated_fields.append(FieldResult(**evaluated))
-
-                results.append(
-                    ReadOut(
-                        name=filename,
-                        text=text,
-                        entities=[
-                            EntityOut(
-                                label=e["label"],
-                                text=e["text"],
-                                start=e["start"],
-                                end=e["end"],
-                                score=e["score"],
-                            )
-                            for e in entities_raw
-                        ],
-                        fields_validated=validated_fields,
-                    )
-                )
-            
-            return results
+            return build_readOut(out, filenames, document_class, gliner_threshold)
 
     return predictor
