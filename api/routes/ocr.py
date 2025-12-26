@@ -75,8 +75,12 @@ async def perform_ocr(
         predictor = init_predictor(ocr_params)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    
+    out = predictor(content, filenames)
 
-    out = predictor(content).export()
+    logger.debug(f"OCR output: {out}")
+
+    # out = predictor(content).export()
 
     results: list[ReadOut] = []   # ✅ AVANT LA BOUCLE
 

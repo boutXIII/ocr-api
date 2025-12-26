@@ -12,8 +12,9 @@ import cv2
 import numpy as np
 from fastapi import UploadFile
 from onnxtr.io import DocumentFile
+from onnxtr.models import EngineConfig, ocr_predictor
+from onnxtr.models.predictor import OCRPredictor
 
-from onnxtr.models.classification import mobilenet_v3_small_page_orientation
 from gliner import GLiNER
 
 from api.logger import get_logger
@@ -153,8 +154,8 @@ def load_reco_models(reco_arch: str = "crnn_vgg16_bn"):
 
     return reco_model
 
-def load_orientation_models(orientation_arch: str = "mobilenet_v3_small_page_orientation"):
-    """Load orientation model
+def load_page_orientation_models(orientation_arch: str = "mobilenet_v3_small_page_orientation"):
+    """Load page orientation model
 
     Args:
         reco_arch: Recognition architecture name
@@ -162,7 +163,7 @@ def load_orientation_models(orientation_arch: str = "mobilenet_v3_small_page_ori
     Returns:
         Orientation model
     """
-    print(f"Loading orientation model: {orientation_arch}...")
+    print(f"Loading page orientation model: {orientation_arch}...")
     orientation_path = find_model_path(orientation_arch)
     orientation_module = importlib.import_module("onnxtr.models.classification")
     orientation_fn = getattr(orientation_module, orientation_arch)
@@ -177,6 +178,122 @@ def load_orientation_models(orientation_arch: str = "mobilenet_v3_small_page_ori
     orientation_predictor = zoo_module.page_orientation_predictor(orientation_model)
 
     return orientation_predictor
+
+def load_crop_orientation_models(orientation_arch: str = "mobilenet_v3_small_crop_orientation"):
+    """Load crop orientation model
+
+    Args:
+        reco_arch: Recognition architecture name
+        
+    Returns:
+        Crop orientation model
+    """
+    print(f"Loading crop orientation model: {orientation_arch}...")
+    orientation_path = find_model_path(orientation_arch)
+    orientation_module = importlib.import_module("onnxtr.models.classification")
+    orientation_fn = getattr(orientation_module, orientation_arch)
+    orientation_model = orientation_fn(orientation_path)
+
+    logger.debug(f"Orientation model loaded: {orientation_arch}")
+    logger.debug(f"Orientation model loaded from {orientation_path}")
+    logger.debug(f"Orientation model function: {orientation_fn}")
+    logger.debug(f"Orientation model details: {orientation_model}")
+
+    zoo_module = importlib.import_module("onnxtr.models.classification.zoo")
+    orientation_predictor = zoo_module.crop_orientation_predictor(orientation_model)
+
+    return orientation_predictor
+
+def load_predictor(
+    det_arch: str,
+    reco_arch: str,
+    detect_language: bool,
+    detect_orientation: bool,
+    bin_thresh: float,
+    box_thresh: float,
+) -> OCRPredictor:
+    """Charge un predictor docTR en ONNX via OnnxTR.
+
+    Signature compatible avec backend/ocr/doctr/pytorch.py pour
+    pouvoir simplement changer l'import dans le reste du projet.
+
+    Args:
+        det_arch: architecture de détection (nom string)
+        reco_arch: architecture de reconnaissance (nom string)
+        assume_straight_pages: supposer les pages droites
+        straighten_pages: redresser les pages
+        export_as_straight_boxes: exporter des boîtes droites
+        disable_page_orientation: désactiver la détection d’orientation de page
+        disable_crop_orientation: désactiver la détection d’orientation de crop
+        detect_language: activer la détection de langue
+        bin_thresh: seuil de binarisation de la carte de segmentation
+        box_thresh: seuil minimal de détection de boîte
+
+    Returns:
+        OCRPredictor (OnnxTR)
+    """
+    logger.debug("load_predictor")
+    # Config ONNXRuntime (CPU)
+    engine_cfg = EngineConfig(
+        providers=[
+            ("CPUExecutionProvider", {"arena_extend_strategy": "kSameAsRequested"})
+        ]
+    )
+
+    # Chargement des modèles
+    det_model = load_det_models(det_arch)
+    reco_model = load_reco_models(reco_arch)
+
+    if detect_orientation:
+        logger.info("Orientation detection enabled")
+
+        predictor = ocr_predictor(
+            det_arch=det_model,
+            reco_arch=reco_model,
+            assume_straight_pages=False,
+            straighten_pages=True,
+            export_as_straight_boxes=True,
+            detect_orientation=detect_orientation,
+            disable_page_orientation=True,
+            disable_crop_orientation=True,
+            detect_language=detect_language,
+            det_engine_cfg=engine_cfg,
+            reco_engine_cfg=engine_cfg,
+            clf_engine_cfg=engine_cfg,
+        )
+
+        # Applique les seuils de post-processing comme dans la version PyTorch
+        predictor.det_predictor.model.postprocessor.bin_thresh = bin_thresh
+        predictor.det_predictor.model.postprocessor.box_thresh = box_thresh
+
+        predictor.page_orientation_predictor = load_page_orientation_models()
+        predictor.crop_orientation_predictor = load_crop_orientation_models()
+
+        predictor._page_orientation_disabled = False
+        predictor._page_orientation_disabled = False
+    else:
+        logger.info("Orientation detection disabled")
+
+        predictor = ocr_predictor(
+            det_arch=det_model,
+            reco_arch=reco_model,
+            assume_straight_pages=True,
+            straighten_pages=False,
+            export_as_straight_boxes=False,
+            detect_orientation=detect_orientation,
+            disable_page_orientation=True,
+            disable_crop_orientation=True,
+            detect_language=detect_language,
+            det_engine_cfg=engine_cfg,
+            reco_engine_cfg=engine_cfg,
+            clf_engine_cfg=engine_cfg,
+        )
+
+        # Applique les seuils de post-processing comme dans la version PyTorch
+        predictor.det_predictor.model.postprocessor.bin_thresh = bin_thresh
+        predictor.det_predictor.model.postprocessor.box_thresh = box_thresh
+
+    return predictor
 
 # =========================================
 # GLiNER (NER)

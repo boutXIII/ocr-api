@@ -9,19 +9,18 @@ from pydantic import BaseModel, Field, model_validator
 # INPUT SCHEMAS
 # =========================================
 class OCRIn(BaseModel):
-    det_arch: str = Field(default="db_resnet50", description="Detection model architecture")
-    reco_arch: str = Field(default="crnn_vgg16_bn", description="Recognition model architecture")
+    det_arch: str = Field(default="db_resnet50", description="Architecture du modèle de détection")
+    reco_arch: str = Field(default="crnn_vgg16_bn", description="Architecture du modèle de reconnaissance")
 
-    resolve_lines: bool = Field(default=True, examples=[True])
-    resolve_blocks: bool = Field(default=False, examples=[False])
-    paragraph_break: float = Field(default=0.0035, examples=[0.0035])
-
-    bin_thresh: float = Field(default=0.3, ge=0.0, le=1.0, description="Binarization threshold for detection post-processing")
-    box_thresh: float = Field(default=0.1, ge=0.0, le=1.0, description="Box threshold for detection post-processing")
+    detect_language: bool = Field(default=True, description="Active la detection de la language")
+    detect_orientation: bool = Field(default=False, description="Active la detection de l'orientation de la page")
     
-    use_print_type: bool = Field(default=False, description="Enable print/handwritten classification")
-    reco_printed: str = Field(default="crnn_vgg16_bn", description="Reco model for printed text")
-    reco_handwritten: str = Field(default="parseq", description="Reco model for handwritten text")
+    bin_thresh: float = Field(default=0.3, ge=0.0, le=1.0, description="Seuil binaire pour la détection post-traitement")
+    box_thresh: float = Field(default=0.1, ge=0.0, le=1.0, description="Seuil de boîte pour la détection post-traitement")
+    
+    use_print_type: bool = Field(default=False, description="Active la détection du type d'écriture (imprimé / manuscrit)")
+    reco_printed: str = Field(default="crnn_vgg16_bn", description="Modele de reco pour le texte imprimé")
+    reco_handwritten: str = Field(default="parseq", description="Modele de reco pour le texte manuscrit")
 
 # =========================================
 # HEALTH SCHEMAS
@@ -149,7 +148,7 @@ class OCROut(BaseModel):
 # READ / NER
 # =========================================
 class ReadIn(BaseModel):
-    document_class: str = Field(default="RIB", examples=["FACTURE"])
+    document_class: str = Field(default="FACT_MEDECINE_DOUCE", examples=["FACTURE"])
     gliner_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
 
 

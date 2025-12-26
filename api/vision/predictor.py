@@ -8,11 +8,11 @@ import numpy as np
 import onnxruntime as ort
 
 from onnxtr.models.builder import DocumentBuilder
-from onnxtr.models import ocr_predictor, detection_predictor, page_orientation_predictor
+from onnxtr.models import detection_predictor
 from onnxtr.models._utils import estimate_orientation
 from onnxtr.models._utils import get_language
 
-from api.utils.tools import load_det_models, load_reco_models, load_orientation_models, resolve_geometry
+from api.utils.tools import load_det_models, load_predictor, load_reco_models, load_page_orientation_models, resolve_geometry
 from api.schemas import OCRBlock, OCRIn, OCRLine, OCROut, OCRPage, OCRWord
 from api.vision.print_type import classify_print_type
 
@@ -149,9 +149,6 @@ def init_predictor(request: OCRIn ) -> Callable:
     reco_printed = params.pop("reco_printed", None)
     reco_handwritten = params.pop("reco_handwritten", None)
 
-    bin_thresh = params.pop("bin_thresh")
-    box_thresh = params.pop("box_thresh")
-
     logger.debug(f"Predictor params: {params}")
 
     if isinstance(request, (OCRIn)):
@@ -166,42 +163,49 @@ def init_predictor(request: OCRIn ) -> Callable:
             pages = []
             all_print_types = []
 
-            detector = detection_predictor(
-                arch=load_det_models(params["det_arch"]),
-                assume_straight_pages=False,
-            )
-
-            # page_orient_predictor = page_orientation_predictor("mobilenet_v3_small_page_orientation")
-
-            page_orient_predictor = load_orientation_models()
+            if params.get("detect_orientation", False):
+                logger.debug("Loading page orientation model")
+                page_orient_predictor = load_page_orientation_models()
+                detector = detection_predictor(
+                    arch=load_det_models(params["det_arch"]),
+                    assume_straight_pages=False,
+                )
+            else:
+                detector = detection_predictor(
+                    arch=load_det_models(params["det_arch"]),
+                    assume_straight_pages=True,
+                )
 
             reco_printed_model = load_reco_models(reco_printed)
             reco_handwritten_model = load_reco_models(reco_handwritten)
 
             def predictor(content, filenames):
                 det_out, out_maps = detector(content, return_maps=True)
+                orientations = []
 
-                seg_maps = [
-                    np.where(out_map > getattr(detector.model.postprocessor, "bin_thresh"), 255, 0).astype(np.uint8)
-                    for out_map in out_maps
-                ]
+                if params.get("detect_orientation", False):
+                    logger.debug("Estimating page orientations")
+                    seg_maps = [
+                        np.where(out_map > getattr(detector.model.postprocessor, "bin_thresh"), 255, 0).astype(np.uint8)
+                        for out_map in out_maps
+                    ]
 
-                _, classes, probs = zip(page_orient_predictor(content))
-                # Flatten to list of tuples with (value, confidence)
-                page_orientations = [
-                    (orientation, prob)
-                    for page_classes, page_probs in zip(classes, probs)
-                    for orientation, prob in zip(page_classes, page_probs)
-                ]
+                    _, classes, probs = zip(page_orient_predictor(content))
+                    # Flatten to list of tuples with (value, confidence)
+                    page_orientations = [
+                        (orientation, prob)
+                        for page_classes, page_probs in zip(classes, probs)
+                        for orientation, prob in zip(page_classes, page_probs)
+                    ]
 
-                origin_pages_orientations = [
-                    estimate_orientation(seq_map, general_orientation)
-                    for seq_map, general_orientation in zip(seg_maps, page_orientations)
-                ]
-                orientations = [
-                    {"value": orientation, "confidence": prob} for orientation, prob in zip(origin_pages_orientations, probs[0])
-                ]
-                logger.debug(f"orientations: {orientations}")
+                    origin_pages_orientations = [
+                        estimate_orientation(seq_map, general_orientation)
+                        for seq_map, general_orientation in zip(seg_maps, page_orientations)
+                    ]
+                    orientations = [
+                        {"value": orientation, "confidence": prob} for orientation, prob in zip(origin_pages_orientations, probs[0])
+                    ]
+                    logger.debug(f"orientations: {orientations}")
 
                 for doc, res, filename in zip(content, det_out, filenames):
                     img_shape = doc.shape[:2]
@@ -259,7 +263,8 @@ def init_predictor(request: OCRIn ) -> Callable:
                             "print_type": ptype,
                             "print_confidence": round(pscore, 4)
                         })
-                        logger.debug(f"Crop recognized as {ptype} with confidence {pscore}, text: {text} (conf: {conf})")
+                        if ptype == "handwritten":
+                            logger.debug(f"Crop recognized as {ptype} with confidence {pscore}, text: {text} (conf: {conf})")
 
                     all_boxes.append(np.array(boxes, dtype=np.float32))
                     all_scores.append(np.array(scores, dtype=np.float32))
@@ -290,17 +295,21 @@ def init_predictor(request: OCRIn ) -> Callable:
 
                 for pi, (page, filename) in enumerate(zip(out.get("pages", []), filenames)):
 
-                    texts = [t for t, conf in all_text_preds[pi] if t]
-                    full_text = " ".join(texts)
-                    lang, lang_conf = get_language(full_text)
-                    logger.debug(f"Detected language: {lang} with confidence {lang_conf}")
+                    if params.get("detect_language", False):
+                        logger.debug("Estimating page language")
+                        texts = [t for t, conf in all_text_preds[pi] if t]
+                        full_text = " ".join(texts)
+                        lang, lang_conf = get_language(full_text)
+                        logger.debug(f"Detected language: {lang} with confidence {lang_conf}")
+                    else:
+                        lang, lang_conf = "unknown", 0.0
                     
                     results.append(
                         OCROut(
                             name=filename,
                             orientation={
-                                "value": orientations[0].get("value"),
-                                "confidence": orientations[0].get("confidence"),
+                                "value": orientations[0].get("value") if orientations else 0,
+                                "confidence": orientations[0].get("confidence") if orientations else None,
                             },
                             language={
                                 "value": lang,
@@ -336,13 +345,8 @@ def init_predictor(request: OCRIn ) -> Callable:
 
         else:
             logger.info("Simple OCR mode")
-            params["detect_language"] = True
-            params["assume_straight_pages"] = False
-            params["straighten_pages"] = True
-            params["detect_orientation"] = True
-            predictor_core = ocr_predictor(**params)
-            predictor_core.det_predictor.model.postprocessor.bin_thresh = bin_thresh
-            predictor_core.det_predictor.model.postprocessor.box_thresh = box_thresh
+
+            predictor_core = load_predictor(**params)
             
 
             def predictor(content, filenames):
@@ -402,4 +406,5 @@ def init_predictor(request: OCRIn ) -> Callable:
                 ]
 
                 return results
+        
         return predictor
