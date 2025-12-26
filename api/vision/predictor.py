@@ -4,6 +4,7 @@
 from collections.abc import Callable
 
 import cv2
+from fastapi import HTTPException
 import numpy as np
 import onnxruntime as ort
 
@@ -12,8 +13,10 @@ from onnxtr.models import detection_predictor
 from onnxtr.models._utils import estimate_orientation
 from onnxtr.models._utils import get_language
 
+from api.ner.extractor import extract_entities
+from api.ner.strategy import build_registry
 from api.utils.tools import load_det_models, load_predictor, load_reco_models, load_page_orientation_models, resolve_geometry
-from api.schemas import OCRBlock, OCRIn, OCRLine, OCROut, OCRPage, OCRWord
+from api.schemas import EntityOut, FieldResult, OCRBlock, OCRIn, OCRLine, OCROut, OCRPage, OCRWord, PredictMode, ReadIn, ReadOut
 from api.vision.print_type import classify_print_type
 
 from api.logger import get_logger
@@ -25,6 +28,8 @@ logger = get_logger("PREDICTOR")
 PRINT_TYPE_ONNX = "printed_handwritten_classifier/printed_handwritten_resnet18.onnx"
 IMG_SIZE = (64, 256)
 CLASSES = ["handwritten", "printed"]
+
+REGISTRY = build_registry()
 
 # =========================================
 # Utils
@@ -138,232 +143,194 @@ def init_predictor(request: OCRIn ) -> Callable:
     """
     logger.debug("init_predictor")
 
-    # ---------------------------------
-    # 1. Récupération brute des paramètres
-    # ---------------------------------
+    if request.mode == PredictMode.OCR:
+        logger.info("OCR mode selected.")
+        return _init_ocr_predictor(request)
+    elif request.mode == PredictMode.READ:
+        logger.info("Read/NER mode selected.")
+        return _init_read_predictor(request)
+    
+
+def _init_ocr_predictor(request: OCRIn) -> Callable:
+    """Initialize the OCR predictor based on the request
+
+    Args:
+        request: input request
+
+    Returns:
+        Callable: the OCR predictor
+    """
+    logger.debug("Initializing OCR predictor")
+
     params = request.model_dump()
-
-    logger.debug(f"Predictor params: {params}")
-
     use_print_type = params.pop("use_print_type", False)
     reco_printed = params.pop("reco_printed", None)
     reco_handwritten = params.pop("reco_handwritten", None)
 
     logger.debug(f"Predictor params: {params}")
 
-    if isinstance(request, (OCRIn)):
-        if use_print_type:
-            logger.info("Print-type based OCR mode")
+    if use_print_type:
+        logger.info("Print-type based OCR mode")
 
-            all_boxes = []
-            all_scores = []
-            all_text_preds = []
-            all_crop_orientations = []
-            page_shapes = []
-            pages = []
-            all_print_types = []
+        all_boxes = []
+        all_scores = []
+        all_text_preds = []
+        all_crop_orientations = []
+        page_shapes = []
+        pages = []
+        all_print_types = []
+
+        if params.get("detect_orientation", False):
+            logger.debug("Loading page orientation model")
+            page_orient_predictor = load_page_orientation_models()
+            detector = detection_predictor(
+                arch=load_det_models(params["det_arch"]),
+                assume_straight_pages=False,
+            )
+        else:
+            detector = detection_predictor(
+                arch=load_det_models(params["det_arch"]),
+                assume_straight_pages=True,
+            )
+
+        reco_printed_model = load_reco_models(reco_printed)
+        reco_handwritten_model = load_reco_models(reco_handwritten)
+
+        def predictor(content, filenames):
+            det_out, out_maps = detector(content, return_maps=True)
+            orientations = []
 
             if params.get("detect_orientation", False):
-                logger.debug("Loading page orientation model")
-                page_orient_predictor = load_page_orientation_models()
-                detector = detection_predictor(
-                    arch=load_det_models(params["det_arch"]),
-                    assume_straight_pages=False,
-                )
-            else:
-                detector = detection_predictor(
-                    arch=load_det_models(params["det_arch"]),
-                    assume_straight_pages=True,
-                )
+                logger.debug("Estimating page orientations")
+                seg_maps = [
+                    np.where(out_map > getattr(detector.model.postprocessor, "bin_thresh"), 255, 0).astype(np.uint8)
+                    for out_map in out_maps
+                ]
 
-            reco_printed_model = load_reco_models(reco_printed)
-            reco_handwritten_model = load_reco_models(reco_handwritten)
+                _, classes, probs = zip(page_orient_predictor(content))
+                # Flatten to list of tuples with (value, confidence)
+                page_orientations = [
+                    (orientation, prob)
+                    for page_classes, page_probs in zip(classes, probs)
+                    for orientation, prob in zip(page_classes, page_probs)
+                ]
 
-            def predictor(content, filenames):
-                det_out, out_maps = detector(content, return_maps=True)
-                orientations = []
+                origin_pages_orientations = [
+                    estimate_orientation(seq_map, general_orientation)
+                    for seq_map, general_orientation in zip(seg_maps, page_orientations)
+                ]
+                orientations = [
+                    {"value": orientation, "confidence": prob} for orientation, prob in zip(origin_pages_orientations, probs[0])
+                ]
+                logger.debug(f"orientations: {orientations}")
 
-                if params.get("detect_orientation", False):
-                    logger.debug("Estimating page orientations")
-                    seg_maps = [
-                        np.where(out_map > getattr(detector.model.postprocessor, "bin_thresh"), 255, 0).astype(np.uint8)
-                        for out_map in out_maps
-                    ]
+            for doc, res, filename in zip(content, det_out, filenames):
+                img_shape = doc.shape[:2]
+                page_shapes.append(img_shape)
+                pages.append(doc)
 
-                    _, classes, probs = zip(page_orient_predictor(content))
-                    # Flatten to list of tuples with (value, confidence)
-                    page_orientations = [
-                        (orientation, prob)
-                        for page_classes, page_probs in zip(classes, probs)
-                        for orientation, prob in zip(page_classes, page_probs)
-                    ]
+                boxes = []
+                scores = []
+                text_preds = []
+                crop_orients = []
+                print_types = []
 
-                    origin_pages_orientations = [
-                        estimate_orientation(seq_map, general_orientation)
-                        for seq_map, general_orientation in zip(seg_maps, page_orientations)
-                    ]
-                    orientations = [
-                        {"value": orientation, "confidence": prob} for orientation, prob in zip(origin_pages_orientations, probs[0])
-                    ]
-                    logger.debug(f"orientations: {orientations}")
+                for det in res:
+                    det = np.asarray(det)
+                    coords = det[:-1]
 
-                for doc, res, filename in zip(content, det_out, filenames):
-                    img_shape = doc.shape[:2]
-                    page_shapes.append(img_shape)
-                    pages.append(doc)
-
-                    boxes = []
-                    scores = []
-                    text_preds = []
-                    crop_orients = []
-                    print_types = []
-
-                    for det in res:
-                        det = np.asarray(det)
-                        coords = det[:-1]
-
-                        # Géométrie normalisée
-                        if len(coords) == 4:
-                            x1, y1, x2, y2 = coords
-                            geom = [[x1, y1], [x2, y2]]
-                        else:
-                            geom = np.array(coords).reshape(-1, 2).tolist()
-
-                        px1, py1, px2, py2 = to_absolute_bbox(geom, img_shape)
-
-                        crop = doc[py1:py2, px1:px2]
-                        if crop.size == 0:
-                            continue
-
-                        ptype, pscore = classify_print_type(crop)
-
-                        reco_model = (
-                            reco_printed_model
-                            if ptype == "printed"
-                            else reco_handwritten_model
-                        )
-
-                        text, conf = recognize(crop, reco_model)
-
-                        H, W = img_shape
-                        boxes.append([
-                            px1 / W,
-                            py1 / H,
-                            px2 / W,
-                            py2 / H,
-                        ])
-                        scores.append(pscore)
-                        text_preds.append((text, conf))
-                        crop_orients.append({
-                            "value": 0,
-                            "confidence": None,
-                        })
-                        print_types.append({
-                            "bbox": [px1 / W, py1 / H, px2 / W, py2 / H],
-                            "print_type": ptype,
-                            "print_confidence": round(pscore, 4)
-                        })
-                        if ptype == "handwritten":
-                            logger.debug(f"Crop recognized as {ptype} with confidence {pscore}, text: {text} (conf: {conf})")
-
-                    all_boxes.append(np.array(boxes, dtype=np.float32))
-                    all_scores.append(np.array(scores, dtype=np.float32))
-                    all_text_preds.append(text_preds)
-                    all_crop_orientations.append(crop_orients)
-                    all_print_types.append(print_types)
-
-
-                    builder = DocumentBuilder(
-                        resolve_lines=True,
-                        resolve_blocks=False,
-                        paragraph_break=0.0035,
-                    )
-
-                    predictor_core = builder(
-                        pages=pages,
-                        boxes=all_boxes,
-                        objectness_scores=all_scores,
-                        text_preds=all_text_preds,
-                        page_shapes=page_shapes,
-                        crop_orientations=all_crop_orientations,
-                    )
-
-                    
-
-                out = predictor_core.export()
-                results: list[OCROut] = []
-
-                for pi, (page, filename) in enumerate(zip(out.get("pages", []), filenames)):
-
-                    if params.get("detect_language", False):
-                        logger.debug("Estimating page language")
-                        texts = [t for t, conf in all_text_preds[pi] if t]
-                        full_text = " ".join(texts)
-                        lang, lang_conf = get_language(full_text)
-                        logger.debug(f"Detected language: {lang} with confidence {lang_conf}")
+                    # Géométrie normalisée
+                    if len(coords) == 4:
+                        x1, y1, x2, y2 = coords
+                        geom = [[x1, y1], [x2, y2]]
                     else:
-                        lang, lang_conf = "unknown", 0.0
-                    
-                    results.append(
-                        OCROut(
-                            name=filename,
-                            orientation={
-                                "value": orientations[0].get("value") if orientations else 0,
-                                "confidence": orientations[0].get("confidence") if orientations else None,
-                            },
-                            language={
-                                "value": lang,
-                                "confidence": lang_conf,
-                            },
-                            dimensions=tuple(page.get("dimensions", (0, 0))),
-                            items=[
-                                OCRPage(
-                                    blocks=[
-                                        OCRBlock(
-                                            geometry=resolve_geometry(block["geometry"]),
-                                            objectness_score=1.0,
-                                            lines=[
-                                                OCRLine(
-                                                    geometry=resolve_geometry(line["geometry"]),
-                                                    objectness_score=1.0,
-                                                    words=[
-                                                        build_word(word, all_print_types, pi)
-                                                        for word in line.get("words", [])
-                                                    ],
-                                                )
-                                                for line in block.get("lines", [])
-                                            ],
-                                        )
-                                        for block in page.get("blocks", [])
-                                    ]
-                                )
-                            ],
-                        )
+                        geom = np.array(coords).reshape(-1, 2).tolist()
+
+                    px1, py1, px2, py2 = to_absolute_bbox(geom, img_shape)
+
+                    crop = doc[py1:py2, px1:px2]
+                    if crop.size == 0:
+                        continue
+
+                    ptype, pscore = classify_print_type(crop)
+
+                    reco_model = (
+                        reco_printed_model
+                        if ptype == "printed"
+                        else reco_handwritten_model
                     )
 
-                return results
+                    text, conf = recognize(crop, reco_model)
 
-        else:
-            logger.info("Simple OCR mode")
+                    H, W = img_shape
+                    boxes.append([
+                        px1 / W,
+                        py1 / H,
+                        px2 / W,
+                        py2 / H,
+                    ])
+                    scores.append(pscore)
+                    text_preds.append((text, conf))
+                    crop_orients.append({
+                        "value": 0,
+                        "confidence": None,
+                    })
+                    print_types.append({
+                        "bbox": [px1 / W, py1 / H, px2 / W, py2 / H],
+                        "print_type": ptype,
+                        "print_confidence": round(pscore, 4)
+                    })
+                    if ptype == "handwritten":
+                        logger.debug(f"Crop recognized as {ptype} with confidence {pscore}, text: {text} (conf: {conf})")
 
-            predictor_core = load_predictor(**params)
-            
+                all_boxes.append(np.array(boxes, dtype=np.float32))
+                all_scores.append(np.array(scores, dtype=np.float32))
+                all_text_preds.append(text_preds)
+                all_crop_orientations.append(crop_orients)
+                all_print_types.append(print_types)
 
-            def predictor(content, filenames):
-                out = predictor_core(content).export()
-                logger.debug(f"Detected orientation: {out['pages'][0]['orientation']['value']} degrees")
-                logger.debug(f"Detected orientation: {out['pages'][0]['orientation']['confidence']} degrees")
 
-                results: list[OCROut] = [
+                builder = DocumentBuilder(
+                    resolve_lines=True,
+                    resolve_blocks=False,
+                    paragraph_break=0.0035,
+                )
+
+                predictor_core = builder(
+                    pages=pages,
+                    boxes=all_boxes,
+                    objectness_scores=all_scores,
+                    text_preds=all_text_preds,
+                    page_shapes=page_shapes,
+                    crop_orientations=all_crop_orientations,
+                )
+
+                
+
+            out = predictor_core.export()
+            results: list[OCROut] = []
+
+            for pi, (page, filename) in enumerate(zip(out.get("pages", []), filenames)):
+
+                if params.get("detect_language", False):
+                    logger.debug("Estimating page language")
+                    texts = [t for t, conf in all_text_preds[pi] if t]
+                    full_text = " ".join(texts)
+                    lang, lang_conf = get_language(full_text)
+                    logger.debug(f"Detected language: {lang} with confidence {lang_conf}")
+                else:
+                    lang, lang_conf = "unknown", 0.0
+                
+                results.append(
                     OCROut(
                         name=filename,
                         orientation={
-                            "value": page.get("orientation", {}).get("value"),
-                            "confidence": page.get("orientation", {}).get("confidence"),
+                            "value": orientations[0].get("value") if orientations else 0,
+                            "confidence": orientations[0].get("confidence") if orientations else None,
                         },
                         language={
-                            "value": page.get("language", {}).get("value"),
-                            "confidence": page.get("language", {}).get("confidence")
+                            "value": lang,
+                            "confidence": lang_conf,
                         },
                         dimensions=tuple(page.get("dimensions", (0, 0))),
                         items=[
@@ -377,20 +344,7 @@ def init_predictor(request: OCRIn ) -> Callable:
                                                 geometry=resolve_geometry(line["geometry"]),
                                                 objectness_score=1.0,
                                                 words=[
-                                                    OCRWord(
-                                                        value=word["value"],
-                                                        geometry=resolve_geometry(word["geometry"]),
-                                                        objectness_score=1.0,
-                                                        confidence=round(
-                                                            word.get("confidence", 1.0), 2
-                                                        ),
-                                                        crop_orientation={
-                                                            "value": 0,
-                                                            "confidence": None,
-                                                        },
-                                                        print_type=None,
-                                                        print_confidence=None,
-                                                    )
+                                                    build_word(word, all_print_types, pi)
                                                     for word in line.get("words", [])
                                                 ],
                                             )
@@ -402,9 +356,363 @@ def init_predictor(request: OCRIn ) -> Callable:
                             )
                         ],
                     )
-                    for page, filename in zip(out.get("pages", []), filenames)
+                )
+
+            return results
+
+    else:
+        logger.info("Simple OCR mode")
+
+        predictor_core = load_predictor(**params)
+        
+
+        def predictor(content, filenames):
+            out = predictor_core(content).export()
+            logger.debug(f"Detected orientation: {out['pages'][0]['orientation']['value']} degrees")
+            logger.debug(f"Detected orientation: {out['pages'][0]['orientation']['confidence']} degrees")
+
+            results: list[OCROut] = [
+                OCROut(
+                    name=filename,
+                    orientation={
+                        "value": page.get("orientation", {}).get("value"),
+                        "confidence": page.get("orientation", {}).get("confidence"),
+                    },
+                    language={
+                        "value": page.get("language", {}).get("value"),
+                        "confidence": page.get("language", {}).get("confidence")
+                    },
+                    dimensions=tuple(page.get("dimensions", (0, 0))),
+                    items=[
+                        OCRPage(
+                            blocks=[
+                                OCRBlock(
+                                    geometry=resolve_geometry(block["geometry"]),
+                                    objectness_score=1.0,
+                                    lines=[
+                                        OCRLine(
+                                            geometry=resolve_geometry(line["geometry"]),
+                                            objectness_score=1.0,
+                                            words=[
+                                                OCRWord(
+                                                    value=word["value"],
+                                                    geometry=resolve_geometry(word["geometry"]),
+                                                    objectness_score=1.0,
+                                                    confidence=round(
+                                                        word.get("confidence", 1.0), 2
+                                                    ),
+                                                    crop_orientation={
+                                                        "value": 0,
+                                                        "confidence": None,
+                                                    },
+                                                    print_type=None,
+                                                    print_confidence=None,
+                                                )
+                                                for word in line.get("words", [])
+                                            ],
+                                        )
+                                        for line in block.get("lines", [])
+                                    ],
+                                )
+                                for block in page.get("blocks", [])
+                            ]
+                        )
+                    ],
+                )
+                for page, filename in zip(out.get("pages", []), filenames)
+            ]
+
+            return results
+    
+    return predictor
+
+def _init_read_predictor(request: ReadIn) -> Callable:
+    """Initialize the Read/NER predictor based on the request
+
+    Args:
+        request: input request
+
+    Returns:
+        Callable: the Read/NER predictor
+    """
+    logger.debug("Initializing Read/NER predictor")
+
+    params = request.model_dump()
+    use_print_type = params.pop("use_print_type", False)
+    reco_printed = params.pop("reco_printed", None)
+    reco_handwritten = params.pop("reco_handwritten", None)
+
+    document_class = params.pop("document_class", "FACT_MEDECINE_DOUCE")
+    gliner_threshold = params.pop("gliner_threshold", 0.7)
+
+    logger.debug(f"Predictor params: {params}")
+
+    if use_print_type:
+        logger.info("Print-type based Read/NER mode")
+
+        all_boxes = []
+        all_scores = []
+        all_text_preds = []
+        all_crop_orientations = []
+        page_shapes = []
+        pages = []
+        all_print_types = []
+
+        if params.get("detect_orientation", False):
+            logger.debug("Loading page orientation model")
+            page_orient_predictor = load_page_orientation_models()
+            detector = detection_predictor(
+                arch=load_det_models(params["det_arch"]),
+                assume_straight_pages=False,
+            )
+        else:
+            detector = detection_predictor(
+                arch=load_det_models(params["det_arch"]),
+                assume_straight_pages=True,
+            )
+
+        reco_printed_model = load_reco_models(reco_printed)
+        reco_handwritten_model = load_reco_models(reco_handwritten)
+
+        def predictor(content, filenames):
+            det_out, out_maps = detector(content, return_maps=True)
+            orientations = []
+
+            if params.get("detect_orientation", False):
+                logger.debug("Estimating page orientations")
+                seg_maps = [
+                    np.where(out_map > getattr(detector.model.postprocessor, "bin_thresh"), 255, 0).astype(np.uint8)
+                    for out_map in out_maps
                 ]
 
-                return results
-        
-        return predictor
+                _, classes, probs = zip(page_orient_predictor(content))
+                # Flatten to list of tuples with (value, confidence)
+                page_orientations = [
+                    (orientation, prob)
+                    for page_classes, page_probs in zip(classes, probs)
+                    for orientation, prob in zip(page_classes, page_probs)
+                ]
+
+                origin_pages_orientations = [
+                    estimate_orientation(seq_map, general_orientation)
+                    for seq_map, general_orientation in zip(seg_maps, page_orientations)
+                ]
+                orientations = [
+                    {"value": orientation, "confidence": prob} for orientation, prob in zip(origin_pages_orientations, probs[0])
+                ]
+                logger.debug(f"orientations: {orientations}")
+
+            for doc, res, filename in zip(content, det_out, filenames):
+                img_shape = doc.shape[:2]
+                page_shapes.append(img_shape)
+                pages.append(doc)
+
+                boxes = []
+                scores = []
+                text_preds = []
+                crop_orients = []
+                print_types = []
+
+                for det in res:
+                    det = np.asarray(det)
+                    coords = det[:-1]
+
+                    # Géométrie normalisée
+                    if len(coords) == 4:
+                        x1, y1, x2, y2 = coords
+                        geom = [[x1, y1], [x2, y2]]
+                    else:
+                        geom = np.array(coords).reshape(-1, 2).tolist()
+
+                    px1, py1, px2, py2 = to_absolute_bbox(geom, img_shape)
+
+                    crop = doc[py1:py2, px1:px2]
+                    if crop.size == 0:
+                        continue
+
+                    ptype, pscore = classify_print_type(crop)
+
+                    reco_model = (
+                        reco_printed_model
+                        if ptype == "printed"
+                        else reco_handwritten_model
+                    )
+
+                    text, conf = recognize(crop, reco_model)
+
+                    H, W = img_shape
+                    boxes.append([
+                        px1 / W,
+                        py1 / H,
+                        px2 / W,
+                        py2 / H,
+                    ])
+                    scores.append(pscore)
+                    text_preds.append((text, conf))
+                    crop_orients.append({
+                        "value": 0,
+                        "confidence": None,
+                    })
+                    print_types.append({
+                        "bbox": [px1 / W, py1 / H, px2 / W, py2 / H],
+                        "print_type": ptype,
+                        "print_confidence": round(pscore, 4)
+                    })
+                    if ptype == "handwritten":
+                        logger.debug(f"Crop recognized as {ptype} with confidence {pscore}, text: {text} (conf: {conf})")
+
+                all_boxes.append(np.array(boxes, dtype=np.float32))
+                all_scores.append(np.array(scores, dtype=np.float32))
+                all_text_preds.append(text_preds)
+                all_crop_orientations.append(crop_orients)
+                all_print_types.append(print_types)
+
+
+                builder = DocumentBuilder(
+                    resolve_lines=True,
+                    resolve_blocks=False,
+                    paragraph_break=0.0035,
+                )
+
+                predictor_core = builder(
+                    pages=pages,
+                    boxes=all_boxes,
+                    objectness_scores=all_scores,
+                    text_preds=all_text_preds,
+                    page_shapes=page_shapes,
+                    crop_orientations=all_crop_orientations,
+                )
+
+            out = predictor_core.export()
+            results: list[OCROut] = []
+
+            for page, filename in zip(out.get("pages", []), filenames):
+                 # --- texte OCR ---
+                text = " ".join(
+                    word["value"]
+                    for block in page.get("blocks", [])
+                    for line in block.get("lines", [])
+                    for word in line.get("words", [])
+                )
+                logger.debug(f"Extracted text for NER: {text}")
+
+                try:
+                    entities_raw = extract_entities(
+                        text=text,
+                        document_class=document_class,
+                        gliner_threshold=gliner_threshold,
+                    )
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+
+                ctx: dict = {}
+                validated_fields: list[FieldResult] = []
+
+                for e in entities_raw:
+                    label = e["label"]
+                    raw = e["text"]
+                    score = float(e["score"])
+
+                    if label == "person":
+                        ctx["person"] = raw
+
+                    evaluated = REGISTRY.evaluate(
+                        document_class=document_class,
+                        label=label,
+                        raw_value=raw,
+                        score=score,
+                        ctx=ctx,
+                    )
+
+                    validated_fields.append(FieldResult(**evaluated))
+
+                results.append(
+                    ReadOut(
+                        name=filename,
+                        text=text,
+                        entities=[
+                            EntityOut(
+                                label=e["label"],
+                                text=e["text"],
+                                start=e["start"],
+                                end=e["end"],
+                                score=e["score"],
+                            )
+                            for e in entities_raw
+                        ],
+                        fields_validated=validated_fields,
+                    )
+                )
+            
+            return results
+    else:
+        logger.info("Simple Read/NER mode")
+
+        predictor_core = load_predictor(**params)
+
+        def predictor(content, filenames):
+            out = predictor_core(content).export()
+            logger.debug(f"Read/NER output: {out}")
+
+            results: list[ReadOut] = []
+            for page, filename in zip(out.get("pages", []), filenames):
+                 # --- texte OCR ---
+                text = " ".join(
+                    word["value"]
+                    for block in page.get("blocks", [])
+                    for line in block.get("lines", [])
+                    for word in line.get("words", [])
+                )
+                logger.debug(f"Extracted text for NER: {text}")
+
+                try:
+                    entities_raw = extract_entities(
+                        text=text,
+                        document_class=document_class,
+                        gliner_threshold=gliner_threshold,
+                    )
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+
+                ctx: dict = {}
+                validated_fields: list[FieldResult] = []
+
+                for e in entities_raw:
+                    label = e["label"]
+                    raw = e["text"]
+                    score = float(e["score"])
+
+                    if label == "person":
+                        ctx["person"] = raw
+
+                    evaluated = REGISTRY.evaluate(
+                        document_class=document_class,
+                        label=label,
+                        raw_value=raw,
+                        score=score,
+                        ctx=ctx,
+                    )
+
+                    validated_fields.append(FieldResult(**evaluated))
+
+                results.append(
+                    ReadOut(
+                        name=filename,
+                        text=text,
+                        entities=[
+                            EntityOut(
+                                label=e["label"],
+                                text=e["text"],
+                                start=e["start"],
+                                end=e["end"],
+                                score=e["score"],
+                            )
+                            for e in entities_raw
+                        ],
+                        fields_validated=validated_fields,
+                    )
+                )
+            
+            return results
+
+    return predictor

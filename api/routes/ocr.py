@@ -10,19 +10,16 @@ from api.logger import get_logger
 logger = get_logger("OCR_ROUTE")
 
 from api.schemas import (
-    OCRIn, OCROut, OCRPage, OCRBlock, OCRLine, OCRWord,
-    ReadIn, ReadOut, EntityOut, FieldResult,
+    OCRIn, OCROut,
+    ReadIn, ReadOut
 )
-from api.utils.tools import get_documents, resolve_geometry
+from api.utils.tools import get_documents
 from api.vision.predictor import init_predictor
-from api.ner.strategy import build_registry
-from api.ner.extractor import extract_entities
 
 # =========================================
 # Router & Registry
 # =========================================
 router = APIRouter()
-REGISTRY = build_registry()
 
 # =========================================
 # OCR endpoint
@@ -62,7 +59,6 @@ async def perform_ocr(
 )
 async def perform_ocr(
     request: Request,
-    ocr_params: OCRIn = Depends(),
     read_params: ReadIn = Depends(),
     file: UploadFile = File(
         None,
@@ -72,74 +68,75 @@ async def perform_ocr(
 
     try:
         content, filenames = await get_documents(request, file)
-        predictor = init_predictor(ocr_params)
+        predictor = init_predictor(read_params)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     
-    out = predictor(content, filenames)
+    # out = predictor(content, filenames)
 
-    logger.debug(f"OCR output: {out}")
+    # logger.debug(f"OCR output: {out}")
 
-    # out = predictor(content).export()
+    # # out = predictor(content).export()
 
-    results: list[ReadOut] = []   # ✅ AVANT LA BOUCLE
+    # results: list[ReadOut] = []   # ✅ AVANT LA BOUCLE
 
-    for page, filename in zip(out.get("pages", []), filenames):
+    # for page, filename in zip(out.get("pages", []), filenames):
 
-        # --- texte OCR ---
-        text = " ".join(
-            word["value"]
-            for block in page.get("blocks", [])
-            for line in block.get("lines", [])
-            for word in line.get("words", [])
-        )
+    #     # --- texte OCR ---
+    #     text = " ".join(
+    #         word["value"]
+    #         for block in page.get("blocks", [])
+    #         for line in block.get("lines", [])
+    #         for word in line.get("words", [])
+    #     )
 
-        try:
-            entities_raw = extract_entities(
-                text=text,
-                document_class=read_params.document_class,
-                gliner_threshold=read_params.gliner_threshold,
-            )
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+    #     try:
+    #         entities_raw = extract_entities(
+    #             text=text,
+    #             document_class=read_params.document_class,
+    #             gliner_threshold=read_params.gliner_threshold,
+    #         )
+    #     except ValueError as e:
+    #         raise HTTPException(status_code=400, detail=str(e))
 
-        ctx: dict = {}
-        validated_fields: list[FieldResult] = []
+    #     ctx: dict = {}
+    #     validated_fields: list[FieldResult] = []
 
-        for e in entities_raw:
-            label = e["label"]
-            raw = e["text"]
-            score = float(e["score"])
+    #     for e in entities_raw:
+    #         label = e["label"]
+    #         raw = e["text"]
+    #         score = float(e["score"])
 
-            if label == "person":
-                ctx["person"] = raw
+    #         if label == "person":
+    #             ctx["person"] = raw
 
-            evaluated = REGISTRY.evaluate(
-                document_class=read_params.document_class,
-                label=label,
-                raw_value=raw,
-                score=score,
-                ctx=ctx,
-            )
+    #         evaluated = REGISTRY.evaluate(
+    #             document_class=read_params.document_class,
+    #             label=label,
+    #             raw_value=raw,
+    #             score=score,
+    #             ctx=ctx,
+    #         )
 
-            validated_fields.append(FieldResult(**evaluated))
+    #         validated_fields.append(FieldResult(**evaluated))
 
-        results.append(
-            ReadOut(
-                name=filename,
-                text=text,
-                entities=[
-                    EntityOut(
-                        label=e["label"],
-                        text=e["text"],
-                        start=e["start"],
-                        end=e["end"],
-                        score=e["score"],
-                    )
-                    for e in entities_raw
-                ],
-                fields_validated=validated_fields,
-            )
-        )
+    #     results.append(
+    #         ReadOut(
+    #             name=filename,
+    #             text=text,
+    #             entities=[
+    #                 EntityOut(
+    #                     label=e["label"],
+    #                     text=e["text"],
+    #                     start=e["start"],
+    #                     end=e["end"],
+    #                     score=e["score"],
+    #                 )
+    #                 for e in entities_raw
+    #             ],
+    #             fields_validated=validated_fields,
+    #         )
+    #     )
 
-    return results
+    # return results
+    return predictor(content, filenames)

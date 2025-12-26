@@ -3,12 +3,23 @@
 # =========================================
 from typing import Any, Dict, List
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, PrivateAttr
+from enum import Enum
+
+class PredictMode(str, Enum):
+    OCR = "ocr"
+    READ = "read"
 
 # =========================================
 # INPUT SCHEMAS
 # =========================================
 class OCRIn(BaseModel):
+    _mode: PredictMode = PrivateAttr(default=PredictMode.OCR)
+
+    @property
+    def mode(self) -> PredictMode:
+        return self._mode
+
     det_arch: str = Field(default="db_resnet50", description="Architecture du modèle de détection")
     reco_arch: str = Field(default="crnn_vgg16_bn", description="Architecture du modèle de reconnaissance")
 
@@ -148,6 +159,25 @@ class OCROut(BaseModel):
 # READ / NER
 # =========================================
 class ReadIn(BaseModel):
+    _mode: PredictMode = PrivateAttr(default=PredictMode.READ)
+
+    @property
+    def mode(self) -> PredictMode:
+        return self._mode
+    
+    det_arch: str = Field(default="db_resnet50", description="Architecture du modèle de détection")
+    reco_arch: str = Field(default="crnn_vgg16_bn", description="Architecture du modèle de reconnaissance")
+
+    detect_language: bool = Field(default=True, description="Active la detection de la language")
+    detect_orientation: bool = Field(default=False, description="Active la detection de l'orientation de la page")
+    
+    bin_thresh: float = Field(default=0.3, ge=0.0, le=1.0, description="Seuil binaire pour la détection post-traitement")
+    box_thresh: float = Field(default=0.1, ge=0.0, le=1.0, description="Seuil de boîte pour la détection post-traitement")
+    
+    use_print_type: bool = Field(default=False, description="Active la détection du type d'écriture (imprimé / manuscrit)")
+    reco_printed: str = Field(default="crnn_vgg16_bn", description="Modele de reco pour le texte imprimé")
+    reco_handwritten: str = Field(default="parseq", description="Modele de reco pour le texte manuscrit")
+
     document_class: str = Field(default="FACT_MEDECINE_DOUCE", examples=["FACTURE"])
     gliner_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
 
