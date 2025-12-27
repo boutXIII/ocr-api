@@ -17,17 +17,9 @@ from onnxtr.models.predictor import OCRPredictor
 
 from gliner import GLiNER
 
+from api.config import ONNXTR_CACHE_DIR
 from api.logger import get_logger
 logger = get_logger("TOOLS_UTILS")
-
-# =========================================
-# Constantes / Environnement
-# =========================================
-DEFAULT_ONNXTR_CACHE = "D:\\Workspaces\\ocr-api\\models\\doctr\\"
-
-os.environ.setdefault("ONNXTR_CACHE_DIR", str(DEFAULT_ONNXTR_CACHE))
-
-logger.info(f"ONNXTR_CACHE_DIR set to {os.environ['ONNXTR_CACHE_DIR']}")
 
 # =========================================
 # Geometry helpers
@@ -98,7 +90,7 @@ async def get_documents(
 # =========================================
 # ONNX model resolution / loading
 # =========================================
-def find_model_path(model_name: str, models_dir: str = DEFAULT_ONNXTR_CACHE) -> str:
+def find_model_path(model_name: str, models_dir: str = ONNXTR_CACHE_DIR) -> str:
     """
     Recherche un fichier .pt correspondant au modèle choisi dans le cache local.
     Exemple : det_arch='db_resnet50' → 'db_resnet50-xxxx.pt'

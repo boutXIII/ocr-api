@@ -3,6 +3,8 @@ import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from api.config import LOG_LEVEL
+
 
 LOG_NAME = "ocr"
 LOG_LEVEL = logging.DEBUG
@@ -59,6 +61,6 @@ def get_logger(name: str = LOG_NAME) -> logging.Logger:
 
     # Mark as configured
     logger._configured = True
-
     logger.debug("Logger initialized")
+    
     return logger

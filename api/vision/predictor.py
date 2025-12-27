@@ -231,7 +231,6 @@ def init_predictor(request: OCRIn ) -> Callable:
         logger.info("Read/NER mode selected.")
         return _init_read_predictor(request)
     
-
 def _init_ocr_predictor(request: OCRIn) -> Callable:
     """Initialize the OCR predictor based on the request
 

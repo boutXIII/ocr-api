@@ -6,6 +6,9 @@ import numpy as np
 import onnxruntime as ort
 from pathlib import Path
 
+from api.logger import get_logger
+logger = get_logger("PRINT TYPE")
+
 # =====================================================
 # CONFIG
 # =====================================================
