@@ -28,5 +28,26 @@ ONNXTR_CACHE_DIR = os.environ.get(
 
 os.environ.setdefault("ONNXTR_CACHE_DIR", str(ONNXTR_CACHE_DIR))
 
+# =========================================
+# PRINT TYPE Cache directory
+# =========================================
+PRINT_TYPE_ONNX = (
+    Path(__file__).resolve().parents[1]
+    / "models"
+    / "print_type"
+    / "printed_handwritten_resnet18.onnx"
+)
+
+# =========================================
+# GLINER Cache directory
+# =========================================
+GLINER_CACHE_DIR = (
+    Path(__file__).resolve().parents[1]
+    / "models"
+    / "gliner"
+    / "gliner_large-v2.5"
+)
+
+
 logger.info("Configuration loaded")
 logger.debug(f"DEBUG={DEBUG}")

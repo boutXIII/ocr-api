@@ -17,8 +17,9 @@ from onnxtr.models.predictor import OCRPredictor
 
 from gliner import GLiNER
 
-from api.config import ONNXTR_CACHE_DIR
+from api.config import GLINER_CACHE_DIR, ONNXTR_CACHE_DIR
 from api.logger import get_logger
+from api.vision.model_store import ModelStore
 logger = get_logger("TOOLS_UTILS")
 
 # =========================================
@@ -290,11 +291,20 @@ def load_predictor(
 # =========================================
 # GLiNER (NER)
 # =========================================
-gliner_model = GLiNER.from_pretrained(
-    "models/gliner/gliner_large-v2.5",
-    load_onnx_model=True,
-    map_location="cpu",
-)
+def load_gliner_model() -> GLiNER:
+    """Load GLiNER model from local path
+
+    Returns:
+        GLiNER model
+    """
+    logger.info("Loading GLiNER model...")
+    gliner_model = GLiNER.from_pretrained(
+        GLINER_CACHE_DIR,
+        load_onnx_model=True,
+        map_location="cpu",
+    )
+    logger.info("GLiNER model loaded successfully")
+    return gliner_model
 
 def run_gliner(
     *,
@@ -305,6 +315,7 @@ def run_gliner(
     """
     GLiNER engine — no document knowledge here
     """
+    gliner_model: GLiNER = ModelStore.get("ner_registry")
     return gliner_model.predict_entities(
         text=text,
         labels=labels,

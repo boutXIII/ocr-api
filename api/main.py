@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.openapi.utils import get_openapi
 
 from api.logger import get_logger
+from api.bootstrap import preload_models
 from api import config as cfg
 from api.routes import ocr, health
 
@@ -26,6 +27,9 @@ async def lifespan(app: FastAPI):
     # 🔥 STARTUP
     logger.info("=== LOGGER STARTED ===")
     logger.info(f"ONNXTR_CACHE_DIR set to {os.environ.get('ONNXTR_CACHE_DIR')}")
+
+    logger.info("=== CACHE AND MODELS PRELOADING ===")
+    preload_models()
 
     yield  # 👉 application runs here
 

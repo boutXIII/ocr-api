@@ -6,7 +6,6 @@ from collections.abc import Callable
 import cv2
 from fastapi import HTTPException
 import numpy as np
-import onnxruntime as ort
 
 from onnxtr.models.builder import DocumentBuilder
 from onnxtr.models import detection_predictor
@@ -18,19 +17,13 @@ from api.ner.strategy import build_registry
 from api.utils.tools import load_det_models, load_predictor, load_reco_models, load_page_orientation_models, resolve_geometry
 from api.schemas import EntityOut, FieldResult, OCRBlock, OCRIn, OCRLine, OCROut, OCRPage, OCRWord, PredictMode, ReadIn, ReadOut
 from api.vision.print_type import classify_print_type
+from api.vision.model_store import ModelStore
 
 from api.logger import get_logger
 logger = get_logger("PREDICTOR")
 
-# =========================================
-# CONFIG
-# =========================================
-PRINT_TYPE_ONNX = "printed_handwritten_classifier/printed_handwritten_resnet18.onnx"
-IMG_SIZE = (64, 256)
-CLASSES = ["handwritten", "printed"]
 
 REGISTRY = build_registry()
-
 # =========================================
 # Utils
 # =========================================
@@ -58,14 +51,6 @@ def to_absolute_bbox(coords, img_shape):
         int(xs.max()),
         int(ys.max()),
     )
-
-def preprocess_for_onnx(crop_bgr):
-    img = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
-    img = cv2.resize(img, (IMG_SIZE[1], IMG_SIZE[0]))
-    img = img.astype(np.float32) / 255.0
-    img = (img - 0.5) / 0.5
-    img = np.transpose(img, (2, 0, 1))
-    return img[None, ...]
 
 def recognize(crop_bgr, rec_model):
     crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)

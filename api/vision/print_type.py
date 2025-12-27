@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import onnxruntime as ort
 from pathlib import Path
+from api.config import PRINT_TYPE_ONNX
 
 from api.logger import get_logger
 logger = get_logger("PRINT TYPE")
@@ -14,13 +15,6 @@ logger = get_logger("PRINT TYPE")
 # =====================================================
 IMG_SIZE = (64, 256)  # (H, W)
 CLASSES = ["handwritten", "printed"]
-
-PRINT_TYPE_ONNX = (
-    Path(__file__).resolve().parents[2]
-    / "models"
-    / "print_type"
-    / "printed_handwritten_resnet18.onnx"
-)
 
 # =====================================================
 # ONNX Runtime session (loaded ONCE)
