@@ -11,6 +11,16 @@ class PredictMode(str, Enum):
     READ = "read"
 
 # =========================================
+# SCHEMAS BASE
+# =========================================
+class BaseResponse(BaseModel):
+    duration: float | None = Field(
+        None,
+        description="Execution time in seconds",
+        example=0.8421
+    )
+
+# =========================================
 # INPUT SCHEMAS
 # =========================================
 class OCRIn(BaseModel):
@@ -40,7 +50,7 @@ class HealthModels(BaseModel):
     detection: Dict[str, bool]
     recognition: Dict[str, bool]
 
-class HealthOut(BaseModel):
+class HealthOut(BaseResponse):
     status: str
     engine: str
     models_available: HealthModels
@@ -125,7 +135,7 @@ class OCRPage(BaseModel):
     )
 
 
-class OCROut(BaseModel):
+class OCROut(BaseResponse):
     name: str = Field(..., examples=["example.jpg"])
     orientation: dict[str, float | None] = Field(..., examples=[{"value": 0.0, "confidence": 0.99}])
     language: dict[str, str | float | None] = Field(..., examples=[{"value": "en", "confidence": 0.99}])
@@ -200,7 +210,7 @@ class FieldResult(BaseModel):
     extra: dict[str, Any] = {}
 
 
-class ReadOut(BaseModel):
+class ReadOut(BaseResponse):
     name: str
     text: str
     entities: List[EntityOut]

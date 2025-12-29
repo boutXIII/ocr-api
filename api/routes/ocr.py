@@ -1,6 +1,7 @@
 # =========================================
 # Imports
 # =========================================
+import time
 from fastapi import (
     APIRouter, Depends, File,
     HTTPException, Request, UploadFile, status
@@ -26,7 +27,7 @@ router = APIRouter()
 # =========================================
 @router.post(
         "/",
-        response_model=list[OCROut],
+        response_model=OCROut,
         status_code=status.HTTP_200_OK,
         summary="Perform OCR"
 )
@@ -37,23 +38,35 @@ async def perform_ocr(
         None,
         description="Upload image or PDF file (optional)"
     ),
-) -> list[OCROut]:
+) -> OCROut:
     """Runs docTR OCR model to analyze the input image"""
+    start = time.perf_counter()
+
     try:
         # generator object to list
         content, filenames = await get_documents(request, file)
+        logger.debug(f"filename: {filenames}")
+        logger.debug(f"filename: {filenames[0]}")
         predictor = init_predictor(ocr_params)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    
+    results = predictor(content, filenames)
+    result: OCROut = results[0]
 
-    return predictor(content, filenames)
-
+    return result.model_copy(
+        update={
+            "name": filenames,
+            "duration": round(time.perf_counter() - start, 4)
+        }
+    )
+    
 # =========================================
 # OCR + NER endpoint
 # =========================================
 @router.post(
         "/read",
-        response_model=list[ReadOut],
+        response_model=ReadOut,
         status_code=status.HTTP_200_OK,
         summary="OCR + NER (GLiNER) with document class"
 )
@@ -64,7 +77,9 @@ async def perform_ocr(
         None,
         description="Upload image or PDF file (optional)"
     ),
-) -> list[ReadOut]:
+) -> ReadOut:
+
+    start = time.perf_counter()
 
     try:
         content, filenames = await get_documents(request, file)
@@ -72,4 +87,12 @@ async def perform_ocr(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     
-    return predictor(content, filenames)
+    results = predictor(content, filenames)
+    result: ReadOut = results[0]
+
+    return result.model_copy(
+        update={
+            "name": filenames,
+            "duration": round(time.perf_counter() - start, 4)
+        }
+    )

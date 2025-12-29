@@ -1,7 +1,6 @@
 # =========================================
 # Imports
 # =========================================
-import re
 from typing import Any
 
 from api.ner import rules

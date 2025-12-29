@@ -4,7 +4,6 @@
 import cv2
 import numpy as np
 import onnxruntime as ort
-from pathlib import Path
 from api.config import PRINT_TYPE_ONNX
 
 from api.logger import get_logger

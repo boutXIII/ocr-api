@@ -17,7 +17,6 @@ from api.ner.strategy import build_registry
 from api.utils.tools import load_det_models, load_predictor, load_reco_models, load_page_orientation_models, resolve_geometry
 from api.schemas import EntityOut, FieldResult, OCRBlock, OCRIn, OCRLine, OCROut, OCRPage, OCRWord, PredictMode, ReadIn, ReadOut
 from api.vision.print_type import classify_print_type
-from api.vision.model_store import ModelStore
 
 from api.logger import get_logger
 logger = get_logger("PREDICTOR")

@@ -5,11 +5,9 @@ import os
 import json
 import base64
 import importlib
-from typing import Any, Optional
-from pathlib import Path
 
-import cv2
-import numpy as np
+from typing import Any, Optional, Type, TypeVar
+
 from fastapi import UploadFile
 from onnxtr.io import DocumentFile
 from onnxtr.models import EngineConfig, ocr_predictor
@@ -21,6 +19,19 @@ from api.config import GLINER_CACHE_DIR, ONNXTR_CACHE_DIR
 from api.logger import get_logger
 from api.vision.model_store import ModelStore
 logger = get_logger("TOOLS_UTILS")
+
+T = TypeVar("T")
+
+# =========================================
+# Duration api tools
+# =========================================
+class TimedResponseBuilder:
+    @staticmethod
+    def build(schema: Type[T], duration: float, **kwargs) -> T:
+        return schema(
+            **kwargs,
+            duration=round(duration, 4)
+        )
 
 # =========================================
 # Geometry helpers
