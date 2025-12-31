@@ -20,9 +20,10 @@ DEVICE = "CPU (ONNXRuntime)"
 # Model checks
 # =========================================
 def check_model(name: str) -> bool:
-    for root, _, files in os.walk(MODELS_DIR):
-        if name in root and "model.onnx" in files:
-            return True
+    for _, _, files in os.walk(MODELS_DIR):
+        for f in files:
+            if f.startswith(name) and f.endswith(".onnx"):
+                return True
     return False
 
 # =========================================

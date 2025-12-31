@@ -44,19 +44,18 @@ async def perform_ocr(
 
     try:
         # generator object to list
-        content, filenames = await get_documents(request, file)
-        logger.debug(f"filename: {filenames}")
-        logger.debug(f"filename: {filenames[0]}")
+        content, filename = await get_documents(request, file)
+        logger.debug(f"filenames: {filename}")
         predictor = init_predictor(ocr_params)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     
-    results = predictor(content, filenames)
+    results = predictor(content, filename)
     result: OCROut = results[0]
 
     return result.model_copy(
         update={
-            "name": filenames,
+            "name": filename,
             "duration": round(time.perf_counter() - start, 4)
         }
     )
@@ -70,7 +69,7 @@ async def perform_ocr(
         status_code=status.HTTP_200_OK,
         summary="OCR + NER (GLiNER) with document class"
 )
-async def perform_ocr(
+async def perform_read(
     request: Request,
     read_params: ReadIn = Depends(),
     file: UploadFile = File(
@@ -92,7 +91,7 @@ async def perform_ocr(
 
     return result.model_copy(
         update={
-            "name": filenames,
+            "name": filenames[0],
             "duration": round(time.perf_counter() - start, 4)
         }
     )

@@ -39,6 +39,11 @@ class TimedResponseBuilder:
 def resolve_geometry(
     geom: Any,
 ) -> tuple[float, float, float, float] | tuple[float, float, float, float, float, float, float, float]:
+    if not geom:
+        return ()
+    if isinstance(geom[0], (int, float)) and len(geom) == 4:
+        x1, y1, x2, y2 = geom
+        return (x1, y1, x2, y2)
     if len(geom) == 4:
         return (*geom[0], *geom[1], *geom[2], *geom[3])
     return (*geom[0], *geom[1])
@@ -50,19 +55,16 @@ async def get_documents(
     request,
     file: Optional[UploadFile] = None,
 ) -> tuple[DocumentFile, str]:
-    """Convert a list of UploadFile objects to lists of numpy arrays and their corresponding filenames
+    """Convertit une seule image (pas de multi-page).
     Support:
     - UploadFile (multipart)
     - body brut (image/pdf)
     - JSON base64
-
     Args:
         request: Request object containing the files to be processed
-
     Returns:
     - DocumentFile
     - filename
-
     """
 
     filename = "document"
@@ -70,7 +72,6 @@ async def get_documents(
     if file is not None:
         content = await file.read()
         filename = file.filename or filename
-
     else:
         content = await request.body()
 
@@ -274,7 +275,7 @@ def load_predictor(
         predictor.crop_orientation_predictor = load_crop_orientation_models()
 
         predictor._page_orientation_disabled = False
-        predictor._page_orientation_disabled = False
+        predictor._crop_orientation_disabled = False
     else:
         logger.info("Orientation detection disabled")
 

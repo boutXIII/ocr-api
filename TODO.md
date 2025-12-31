@@ -1,5 +1,14 @@
 # 🧠 OCR API — TODO
 
+## Plan concret (priorites)
+- [ ] Corriger incoherences IO: filenames liste, schema `name`, logs de fichiers
+- [ ] Rendre `resolve_geometry` robuste + corriger flag `_crop_orientation_disabled`
+- [ ] Fiabiliser `/health` (detection des models onnx par prefixe)
+- [ ] Factoriser la logique OCR/Read dans `predictor.py` (reduire duplication)
+- [ ] Ajouter tests: `get_documents`, validateurs dates/NIR/IBAN, multi-page
+- [ ] Ameliorer logs: request id, timings par etape, erreurs uniformes
+- [ ] Mettre a jour `readme.md` (params, multi-doc, print_type)
+
 ## 🚀 Core
 - [x] API FastAPI fonctionnelle
 - [x] Endpoint `/health`
@@ -36,7 +45,7 @@
 - [ ] Redémarrage auto + logs rotation
 
 ## 🧪 Tests
-- [ ] Tests unitaires OCR
+- [x] Tests unitaires OCR v0.0
 - [ ] Test endpoint `/health`
 - [ ] Test endpoint `/ocr`
 - [ ] Test fichier PDF
