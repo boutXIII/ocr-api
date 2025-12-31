@@ -16,7 +16,15 @@ PROJECT_DESCRIPTION: str = "Template API for Optical Character Recognition"
 VERSION: str = "0.0.1"
 DEBUG: bool = os.environ.get("DEBUG", "false").lower() in ("1", "true", "yes")
 LOG_LEVEL = logging.DEBUG if DEBUG else logging.INFO
+SAVE_OCR_BOXES: bool = os.environ.get("SAVE_OCR_BOXES", "false").lower() in ("1", "true", "yes") or DEBUG
 
+# =========================================
+# SAVE IMG Cache directory
+# =========================================
+OCR_BOXES_DIR = os.environ.get(
+    "OCR_BOXES_DIR",
+    str(Path(__file__).resolve().parents[1] / "logs" / "ocr_boxes"),
+)
 
 # =========================================
 # ONNXTR Cache directory

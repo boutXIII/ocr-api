@@ -6,6 +6,8 @@ from collections.abc import Callable
 import cv2
 from fastapi import HTTPException
 import numpy as np
+from pathlib import Path
+import time
 
 from onnxtr.models.builder import DocumentBuilder
 from onnxtr.models import detection_predictor
@@ -17,6 +19,7 @@ from api.ner.strategy import build_registry
 from api.utils.tools import load_det_models, load_predictor, load_reco_models, load_page_orientation_models, resolve_geometry
 from api.schemas import EntityOut, FieldResult, OCRBlock, OCRIn, OCRLine, OCROut, OCRPage, OCRWord, PredictMode, ReadIn, ReadOut
 from api.vision.print_type import classify_print_type
+from api.config import OCR_BOXES_DIR, SAVE_OCR_BOXES
 
 from api.logger import get_logger
 logger = get_logger("PREDICTOR")
@@ -50,6 +53,25 @@ def to_absolute_bbox(coords, img_shape):
         int(xs.max()),
         int(ys.max()),
     )
+
+def save_boxes_overlay(page_bgr: np.ndarray, boxes, filename: str, page_index: int) -> None:
+    if not SAVE_OCR_BOXES:
+        return
+
+    out_dir = Path(OCR_BOXES_DIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    overlay = page_bgr.copy()
+    h, w = overlay.shape[:2]
+
+    for geom in boxes:
+        x1, y1, x2, y2 = to_absolute_bbox(geom, (h, w))
+        cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 200, 0), 2)
+
+    stem = Path(filename).stem or "document"
+    ts = int(time.time() * 1000)
+    out_path = out_dir / f"{stem}_p{page_index}_{ts}.png"
+    cv2.imwrite(str(out_path), overlay)
 
 def recognize(crop_bgr, rec_model):
     crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
@@ -347,6 +369,16 @@ def _init_ocr_predictor(request: OCRIn) -> Callable:
                 )
 
             out = predictor_core.export()
+
+            if SAVE_OCR_BOXES:
+                for pi, (doc, page) in enumerate(zip(content, out.get("pages", []))):
+                    word_geoms = []
+                    for block in page.get("blocks", []):
+                        for line in block.get("lines", []):
+                            for word in line.get("words", []):
+                                word_geoms.append(resolve_geometry(word.get("geometry")))
+                    save_boxes_overlay(doc, word_geoms, filename, pi)
+
             results: list[OCROut] = []
 
             for pi, page in enumerate(out.get("pages", [])):
@@ -406,8 +438,15 @@ def _init_ocr_predictor(request: OCRIn) -> Callable:
 
         def predictor(content, filename):
             out = predictor_core(content).export()
-            logger.debug(f"Detected orientation: {out['pages'][0]['orientation']['value']} degrees")
-            logger.debug(f"Detected orientation: {out['pages'][0]['orientation']['confidence']} degrees")
+
+            if SAVE_OCR_BOXES:
+                for pi, (doc, page) in enumerate(zip(content, out.get("pages", []))):
+                    word_geoms = []
+                    for block in page.get("blocks", []):
+                        for line in block.get("lines", []):
+                            for word in line.get("words", []):
+                                word_geoms.append(resolve_geometry(word.get("geometry")))
+                    save_boxes_overlay(doc, word_geoms, filename, pi)
 
             results: list[OCROut] = [
                 OCROut(
@@ -608,6 +647,17 @@ def _init_read_predictor(request: ReadIn) -> Callable:
                 )
 
             # out = predictor_core.export()
+
+            if SAVE_OCR_BOXES:
+                # render() retourne du texte, donc on relance un export pour les boxes
+                export_out = predictor_core(content).export()
+                for pi, (doc, page) in enumerate(zip(content, export_out.get("pages", []))):
+                    word_geoms = []
+                    for block in page.get("blocks", []):
+                        for line in block.get("lines", []):
+                            for word in line.get("words", []):
+                                word_geoms.append(resolve_geometry(word.get("geometry")))
+                    save_boxes_overlay(doc, word_geoms, filename, pi)
             out = predictor_core.render()
             logger.debug(f"Read/NER output: {out}")
 
@@ -618,6 +668,16 @@ def _init_read_predictor(request: ReadIn) -> Callable:
         predictor_core = load_predictor(**params)
 
         def predictor(content, filename):
+            if SAVE_OCR_BOXES:
+                # render() retourne du texte, donc on relance un export pour les boxes
+                export_out = predictor_core(content).export()
+                for pi, (doc, page) in enumerate(zip(content, export_out.get("pages", []))):
+                    word_geoms = []
+                    for block in page.get("blocks", []):
+                        for line in block.get("lines", []):
+                            for word in line.get("words", []):
+                                word_geoms.append(resolve_geometry(word.get("geometry")))
+                    save_boxes_overlay(doc, word_geoms, filename, pi)
             out = predictor_core(content).render()
             logger.debug(f"Read/NER output: {out}")
 
